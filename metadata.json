@@ -1,0 +1,8 @@
+{
+  "name": "Remix: SaCrAh PuLsAr 7.0",
+  "description": "A modern radio application with live streaming, playlist management, DJ effects, and real-time chat.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
