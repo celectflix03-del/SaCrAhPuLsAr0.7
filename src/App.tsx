@@ -199,6 +199,9 @@ export default function App() {
   const [selectedOutput, setSelectedOutput] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
   const [autoDj, setAutoDj] = useState(true);
+  const [nextTrack, setNextTrack] = useState<Track | null>(null);
+  const [isLiveOnAir, setIsLiveOnAir] = useState(false);
+  const [streamMetadata, setStreamMetadata] = useState<{current: string, next: string} | null>(null);
 
   const [isMicMuted, setIsMicMuted] = useState(false);
 
@@ -216,6 +219,62 @@ export default function App() {
       setAudioDevices(devices);
     });
   }, []);
+
+  // Check if Live Stream is actually reachable/playing
+  useEffect(() => {
+    if (!liveUrl) {
+      setIsLiveOnAir(false);
+      return;
+    }
+
+    const checkLive = async () => {
+      try {
+        const res = await fetch(liveUrl, { method: 'GET', mode: 'no-cors' }); // Using no-cors just to check reachability
+        setIsLiveOnAir(true); // If it doesn't throw, we assume reachable for now
+      } catch (e) {
+        // We can't really check CORS-restricted live streams easily from client, 
+        // so we'll fallback to a timer-based status or assume true if plays
+        setIsLiveOnAir(false);
+      }
+    };
+
+    const interval = setInterval(checkLive, 5000);
+    checkLive();
+    return () => clearInterval(interval);
+  }, [liveUrl, currentTrack, isPlaying]);
+
+  // Simulated Metadata Fetcher for Zeno/Streaming (Updates Playlist Shadows)
+  useEffect(() => {
+    if (!isLiveOnAir || !liveUrl) return;
+
+    const fetchMetadata = async () => {
+      // In a real Zeno scenario, you'd fetch from their API:
+      // https://api.zeno.fm/proxy/station/[STATION_ID]/current-song
+      // For now, we simulate detection of the current stream's title
+      
+      // If we find metadata, we could auto-update currentTrack
+      // setStreamMetadata({ current: 'Song Name', next: 'Next Song' });
+    };
+
+    const metaInterval = setInterval(fetchMetadata, 15000);
+    fetchMetadata();
+    return () => clearInterval(metaInterval);
+  }, [isLiveOnAir, liveUrl]);
+
+  // Determine Next Track
+  useEffect(() => {
+    if (!isPlaying || !currentTrack) {
+      setNextTrack(null);
+      return;
+    }
+
+    const currentIndex = playlist.findIndex(t => t.id === currentTrack.id);
+    if (currentIndex !== -1 && currentIndex < playlist.length - 1) {
+      setNextTrack(playlist[currentIndex + 1]);
+    } else if (playlist.length > 0) {
+      setNextTrack(playlist[0]);
+    }
+  }, [isPlaying, currentTrack, playlist]);
 
   // Sync Output Device
   useEffect(() => {
@@ -324,9 +383,7 @@ export default function App() {
     
     if (audioRef.current) {
         audioRef.current.volume = volume;
-        audioRef.current.onended = () => {
-          if (autoDj) handleNext();
-        };
+        audioRef.current.onended = handleTrackEnded;
     }
 
     return () => {
@@ -590,7 +647,46 @@ export default function App() {
       audioRef.current.src = track.url;
       setIsPlaying(true);
       setCurrentTrack(track);
+      
+      // Determine what the next track will be after this starts
+      const currentIndex = playlist.findIndex(t => t.id === track.id);
+      if (currentIndex !== -1 && currentIndex < playlist.length - 1) {
+        setNextTrack(playlist[currentIndex + 1]);
+      } else if (playlist.length > 0) {
+        setNextTrack(playlist[0]);
+      }
+
       safePlay(audioRef.current);
+    }
+  };
+
+  const handleTrackEnded = () => {
+    if (!autoDj) return;
+
+    // Se estivermos em transmissão ao vivo global, tentamos manter o fluxo
+    if (isLiveOnAir && currentTrack?.id === 'live-master') {
+       // Mantém no live se o AutoDJ estiver configurado para priorizar live
+       playTrack(currentTrack);
+       return;
+    }
+
+    // Lógica de sorteio para vinhetas/comerciais entre músicas
+    const shouldPlayVignette = commercials.length > 0 && Math.random() > 0.7;
+    
+    if (shouldPlayVignette) {
+      const randomVignette = commercials[Math.floor(Math.random() * commercials.length)];
+      if (vignetteAudioRef.current) {
+        vignetteAudioRef.current.src = randomVignette.url;
+        vignetteAudioRef.current.onended = () => {
+          if (nextTrack) playTrack(nextTrack);
+        };
+        safePlay(vignetteAudioRef.current);
+        return;
+      }
+    }
+
+    if (nextTrack) {
+      playTrack(nextTrack);
     }
   };
 
@@ -728,8 +824,8 @@ export default function App() {
           <div className="absolute top-0 left-0 w-full h-1 bg-brand-red shadow-[0_0_15px_rgba(255,59,59,0.5)]" />
           
           <div className="flex items-center gap-4 mb-8">
-            <div className="w-10 h-10 bg-bg-inner rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(255,59,59,0.4)] overflow-hidden border border-brand-red/30">
-              <img src="https://i.ibb.co/1GzM9hLM/logo-radio.jpg" alt="Radio Logo" className="w-full h-full object-cover" />
+            <div className="w-16 h-16 bg-bg-inner rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(255,59,59,0.5)] overflow-hidden border border-brand-red/40 p-2">
+              <img src="https://i.ibb.co/Xxtxqf9W/jas.png" alt="jas" className="w-full h-full object-contain" />
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tighter text-white">SACRAH <span className="text-brand-red">PULSAR</span> 7.0</h1>
@@ -844,8 +940,8 @@ export default function App() {
       {/* Header */}
       <header className="bg-bg-card border border-border-main rounded-xl px-6 py-3 flex items-center justify-between shrink-0 shadow-lg">
         <div className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-bg-inner rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(255,59,59,0.4)] overflow-hidden border border-brand-red/30">
-            <img src="https://i.ibb.co/1GzM9hLM/logo-radio.jpg" alt="Radio Logo" className="w-full h-full object-cover" />
+          <div className="w-12 h-12 bg-bg-inner rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(255,59,59,0.4)] overflow-hidden border border-brand-red/40 p-1.5">
+            <img src="https://i.ibb.co/Xxtxqf9W/jas.png" alt="jas" className="w-full h-full object-contain" />
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tighter text-white uppercase">SACRAH <span className="text-brand-red">PULSAR</span> 7.0</h1>
@@ -857,7 +953,8 @@ export default function App() {
           <div className="hidden md:flex flex-col items-end">
             <span className="text-xs text-text-muted font-mono uppercase">STATION: <span className="text-white">{radioName}</span></span>
             <span className="text-[10px] text-brand-green flex items-center gap-1.5 font-bold uppercase tracking-tight">
-              <span className="w-1.5 h-1.5 rounded-full bg-brand-green animate-pulse" /> STUDIO ONLINE
+              <span className={cn("w-1.5 h-1.5 rounded-full bg-brand-green", isPlaying && "animate-pulse")} /> 
+              {isLiveOnAir ? "LIVE BROADCAST ACTIVE" : isPlaying ? "STUDIO ON AIR" : "STUDIO STANDBY"}
             </span>
           </div>
           <div className="hidden md:block w-px h-8 bg-border-main" />
@@ -866,8 +963,8 @@ export default function App() {
               <p className="text-xs font-bold text-white leading-none uppercase">{user}</p>
               <p className="text-[10px] text-text-dim font-bold uppercase tracking-tighter mt-0.5">Administrator</p>
             </div>
-            <div className="w-10 h-10 rounded-lg bg-bg-inner border border-border-main flex items-center justify-center overflow-hidden">
-              <img src="https://i.ibb.co/1GzM9hLM/logo-radio.jpg" alt="User Profile" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+            <div className="w-10 h-10 rounded-lg bg-bg-inner border border-border-main flex items-center justify-center overflow-hidden p-1">
+              <img src="https://i.ibb.co/Xxtxqf9W/jas.png" alt="User Profile" className="w-full h-full object-contain opacity-80 group-hover:opacity-100 transition-opacity" />
             </div>
           </div>
         </div>
@@ -925,22 +1022,31 @@ export default function App() {
                  </div>
               ) : (
                 playlist.map((track) => (
-                  <Reorder.Item 
-                    key={track.id} 
-                    value={track}
-                    className={cn(
-                      "p-2 rounded-lg border-l-2 transition-all group flex items-center justify-between cursor-default",
-                      currentTrack?.id === track.id ? "bg-bg-hover border-brand-red" : "border-transparent bg-bg-card/40 hover:bg-bg-hover/50 opacity-70 hover:opacity-100"
-                    )}
-                  >
-                    <div className="flex items-center gap-2 flex-1 min-w-0 pr-2">
-                      <div className="cursor-grab active:cursor-grabbing p-1 hover:bg-white/10 rounded shrink-0 opacity-40 group-hover:opacity-100">
-                        <GripVertical size={14} />
-                      </div>
-                      <div className="overflow-hidden flex-1 cursor-pointer" onClick={() => playTrack(track)}>
-                        <p className={cn("text-[11px] font-bold truncate", currentTrack?.id === track.id ? "text-white" : "text-text-main")}>{track.name}</p>
-                      </div>
-                    </div>
+                   <Reorder.Item 
+                     key={track.id} 
+                     value={track}
+                     className={cn(
+                       "p-2 rounded-lg border-l-2 transition-all group flex items-center justify-between cursor-default translate-z-0",
+                       currentTrack?.id === track.id 
+                         ? "bg-brand-green/15 border-brand-green shadow-[0_0_20px_rgba(34,197,94,0.4)] ring-1 ring-brand-green/30" 
+                         : nextTrack?.id === track.id 
+                           ? "bg-brand-yellow/10 border-brand-yellow shadow-[0_0_15px_rgba(234,179,8,0.25)] opacity-90 ring-1 ring-brand-yellow/20"
+                           : "border-transparent bg-bg-card/40 hover:bg-bg-hover/50 opacity-70 hover:opacity-100"
+                     )}
+                   >
+                     <div className="flex items-center gap-2 flex-1 min-w-0 pr-2">
+                       <div className="cursor-grab active:cursor-grabbing p-1 hover:bg-white/10 rounded shrink-0 opacity-40 group-hover:opacity-100">
+                         <GripVertical size={14} />
+                       </div>
+                       <div className="overflow-hidden flex-1 cursor-pointer" onClick={() => playTrack(track)}>
+                         <p className={cn(
+                           "text-[11px] font-bold truncate", 
+                           currentTrack?.id === track.id ? "text-brand-green" : nextTrack?.id === track.id ? "text-brand-yellow" : "text-text-main"
+                         )}>
+                           {track.name}
+                         </p>
+                       </div>
+                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button onClick={() => downloadFile(track.url, track.name)} className="p-1 hover:text-brand-blue opacity-0 group-hover:opacity-100 transition-opacity"><Download size={12} /></button>
                       <button onClick={() => {
